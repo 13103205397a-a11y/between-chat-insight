@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRight, Check, ChevronDown, FileArchive, FileText, Heart, LockKeyhole, Plus, RotateCcw, Sparkles, UploadCloud, X } from 'lucide-react';
+import { ArrowRight, Check, ChevronDown, Eye, EyeOff, FileArchive, FileText, Heart, LockKeyhole, Plus, RotateCcw, Sparkles, UploadCloud, X } from 'lucide-react';
 import { ChatMessage, importFiles, parsePasted } from './parser';
 
 type Result = {
@@ -28,7 +28,12 @@ export default function App() {
   const [mode, setMode] = useState<'file' | 'paste'>('file');
   const [self, setSelf] = useState('');
   const [other, setOther] = useState('');
-  const [ready, setReady] = useState<boolean | null>(null);
+  const [serverReady, setServerReady] = useState<boolean | null>(null);
+  const [apiKey, setApiKey] = useState('');
+  const [keyVerified, setKeyVerified] = useState(false);
+  const [keyChecking, setKeyChecking] = useState(false);
+  const [keyError, setKeyError] = useState('');
+  const [showKey, setShowKey] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<Result | null>(null);
@@ -36,7 +41,7 @@ export default function App() {
   const inputRef = useRef<HTMLInputElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { fetch('/api/health').then((r) => r.json()).then((data) => setReady(Boolean(data.ready))).catch(() => setReady(false)); }, []);
+  useEffect(() => { fetch('/api/health').then((r) => r.json()).then((data) => setServerReady(Boolean(data.ready))).catch(() => setServerReady(false)); }, []);
   const participants = useMemo(() => [...new Set(messages.map((m) => m.sender))].sort((a, b) => messages.filter((m) => m.sender === b).length - messages.filter((m) => m.sender === a).length), [messages]);
   const pairMessages = useMemo(() => messages.filter((m) => m.sender === self || m.sender === other), [messages, self, other]);
   const canAnalyze = self && other && self !== other && pairMessages.filter((m) => m.sender === self).length >= 3 && pairMessages.filter((m) => m.sender === other).length >= 3;
@@ -58,11 +63,26 @@ export default function App() {
     adopt(imported.messages, imported.files, imported.warnings);
   }
 
+  async function verifyKey() {
+    if (!apiKey.trim() || keyChecking) return;
+    setKeyChecking(true); setKeyError(''); setKeyVerified(false);
+    try {
+      const response = await fetch('/api/key/verify', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: apiKey.trim() }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || '连接失败，请重试');
+      setKeyVerified(true);
+    } catch (cause) { setKeyError(cause instanceof Error ? cause.message : '连接失败，请重试'); }
+    finally { setKeyChecking(false); }
+  }
+
   async function analyze() {
     if (!canAnalyze) return;
     setLoading(true); setError(''); setResult(null);
     try {
-      const response = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: pairMessages, self, other }) });
+      const response = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(keyVerified ? { 'X-TypeSafe-Api-Key': apiKey.trim() } : {}) }, body: JSON.stringify({ messages: pairMessages, self, other }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || '分析失败，请重试');
       setResult(data);
@@ -106,10 +126,14 @@ export default function App() {
             <label className="field-label" htmlFor="self">你是</label><div className="select-wrap"><select id="self" value={self} onChange={(e) => { setSelf(e.target.value); setResult(null); }} disabled={!participants.length}><option value="">选择你的名字</option>{participants.map((name) => <option key={name}>{name}</option>)}</select><ChevronDown size={17} /></div>
             <label className="field-label" htmlFor="other">想了解的人</label><div className="select-wrap"><select id="other" value={other} onChange={(e) => { setOther(e.target.value); setResult(null); }} disabled={!participants.length}><option value="">选择对方的名字</option>{participants.filter((name) => name !== self).map((name) => <option key={name}>{name}</option>)}</select><ChevronDown size={17} /></div>
             {participants.length > 2 && <p className="field-note">检测到 {participants.length} 位参与者。分析时只会选取你和对方的消息。</p>}
+            <div className="side-divider" />
+            <div className="key-section"><div className="key-heading"><LockKeyhole size={15} /><strong>连接 JEV</strong>{(serverReady || keyVerified) && <span className="key-connected"><Check size={12} /> 已连接</span>}</div>
+              {serverReady ? <p className="key-help">服务端已配置 API Key，可以直接开始观察。</p> : <><label className="key-label" htmlFor="api-key">TypeSafe API Key</label><div className="key-input-wrap"><input id="api-key" type={showKey ? 'text' : 'password'} value={apiKey} disabled={keyChecking} onChange={(e) => { setApiKey(e.target.value); setKeyVerified(false); setKeyError(''); }} onKeyDown={(e) => { if (e.key === 'Enter') void verifyKey(); }} placeholder="粘贴你的 API Key" autoComplete="off" autoCapitalize="off" spellCheck={false} /><button type="button" className="key-visibility" onClick={() => setShowKey(!showKey)} aria-label={showKey ? '隐藏 API Key' : '显示 API Key'}>{showKey ? <EyeOff size={15} /> : <Eye size={15} />}</button></div><button type="button" className="verify-button" onClick={() => void verifyKey()} disabled={!apiKey.trim() || keyChecking || keyVerified}>{keyChecking ? '正在验证…' : keyVerified ? '已验证' : '验证并连接'}</button><p className="key-help">仅在当前页面内存中使用；刷新后需要重新填写，不会保存到仓库。</p>{keyError && <p className="error-note" role="alert">{keyError}</p>}</>}
+            </div>
             <div className="side-divider" /><div className="check-row"><span><Check size={14} /></span><p>原文件在浏览器中解析</p></div><div className="check-row"><span><Check size={14} /></span><p>仅分析选中的双人文字消息</p></div><div className="check-row"><span><Check size={14} /></span><p>结果不会保存在本站</p></div>
-            <button className="analyze-button" onClick={() => void analyze()} disabled={!canAnalyze || loading}>{loading ? '正在阅读对话…' : '开始观察'}{loading ? <span className="button-spinner" /> : <ArrowRight size={18} />}</button>
+            <button className="analyze-button" onClick={() => void analyze()} disabled={!canAnalyze || !(serverReady || keyVerified) || loading}>{loading ? '正在阅读对话…' : '开始观察'}{loading ? <span className="button-spinner" /> : <ArrowRight size={18} />}</button>
             {!canAnalyze && messages.length > 0 && <p className="small-help">请确认两个人各有至少 3 条文字消息。</p>}
-            {ready === false && <p className="connection-note">JEV 尚未连接。配置 API Key 后即可进行真实分析。</p>}
+            {serverReady === false && !keyVerified && <p className="connection-note">先填写并验证 API Key，再开始真实分析。</p>}
             {error && <p className="error-note" role="alert">{error}</p>}
           </div></aside>
         </div>

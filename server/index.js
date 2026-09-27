@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildRequest, formatResult } from './analysis.js';
+import { resolveApiKey } from './key.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dist = path.join(root, 'dist');
@@ -25,7 +26,8 @@ async function readJson(req) {
 }
 
 async function analyze(req, res) {
-  if (!process.env.TYPESAFE_API_KEY) return sendJson(res, 503, { error: '尚未配置 JEV API Key。请在项目 .env 中设置 TYPESAFE_API_KEY 并重启服务。' });
+  const apiKey = resolveApiKey(req.headers['x-typesafe-api-key'], process.env.TYPESAFE_API_KEY);
+  if (!apiKey) return sendJson(res, 503, { error: '请先填写并验证 JEV API Key，或在服务端配置 TYPESAFE_API_KEY。' });
   let input;
   try { input = await readJson(req); } catch (error) { return sendJson(res, 400, { error: error.message }); }
   let request;
@@ -35,7 +37,7 @@ async function analyze(req, res) {
   try {
     const upstream = await fetch('https://api.typesafe.ai/v1/systemone', {
       method: 'POST', signal: controller.signal,
-      headers: { Authorization: `Bearer ${process.env.TYPESAFE_API_KEY}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(request),
     });
     if (!upstream.ok) {
@@ -51,8 +53,28 @@ async function analyze(req, res) {
   } finally { clearTimeout(timer); }
 }
 
+async function verifyKey(req, res) {
+  let input;
+  try { input = await readJson(req); } catch (error) { return sendJson(res, 400, { error: error.message }); }
+  const apiKey = resolveApiKey(input?.apiKey);
+  if (!apiKey) return sendJson(res, 400, { error: '请输入有效的 JEV API Key' });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const upstream = await fetch('https://api.typesafe.ai/v1/models', {
+      headers: { Authorization: `Bearer ${apiKey}` }, signal: controller.signal,
+    });
+    if (upstream.status === 401 || upstream.status === 403) return sendJson(res, 401, { error: 'API Key 无效或尚无 TypeSafe 访问权限' });
+    if (!upstream.ok) return sendJson(res, 502, { error: `JEV 服务返回 ${upstream.status}，请稍后重试` });
+    return sendJson(res, 200, { ready: true });
+  } catch (error) {
+    return sendJson(res, 502, { error: error.name === 'AbortError' ? '验证超时，请重试' : '无法连接 JEV 服务，请检查网络后重试' });
+  } finally { clearTimeout(timer); }
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.url === '/api/health' && req.method === 'GET') return sendJson(res, 200, { ready: Boolean(process.env.TYPESAFE_API_KEY) });
+  if (req.url === '/api/key/verify' && req.method === 'POST') return verifyKey(req, res);
   if (req.url === '/api/analyze' && req.method === 'POST') return analyze(req, res);
   if (req.url?.startsWith('/api/')) return sendJson(res, 404, { error: '接口不存在' });
   if (req.method !== 'GET' && req.method !== 'HEAD') return sendJson(res, 405, { error: '请求方式不支持' });

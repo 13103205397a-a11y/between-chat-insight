@@ -1,6 +1,11 @@
 {
   "name": "between-chat-insight",
   "version": "0.1.0",
+  "description": "仅供娱乐的 Jev 聊天关系观察应用，逐条读取双人文字消息并展示带边界的爱意迹象判断。",
+  "license": "MIT",
+  "repository": "github:13103205397a-a11y/between-chat-insight",
+  "keywords": ["jev", "typesafe-ai", "chat-analysis", "relationship", "privacy", "react"],
+  "engines": { "node": ">=20.3" },
   "private": true,
   "type": "module",
   "scripts": {

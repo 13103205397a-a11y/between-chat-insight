@@ -1,32 +1,48 @@
 import { describe, expect, it } from 'vitest';
-import { buildRequest, formatResult, selectMessages } from '../server/analysis.js';
+import { analyzeAll, buildChunkRequest, combineResults, prepareConversation } from '../server/analysis.js';
 
-const messages = Array.from({ length: 250 }, (_, i) => ({ sender: i % 2 ? '对方' : '我', text: `消息 ${i}` }));
+const messages = Array.from({ length: 400 }, (_, i) => ({ sender: i % 2 ? '对方' : '我', text: `第 ${i} 条消息，今天一起聊天。` }));
+const answer = (value) => ({ model: 'jev-test', answers: Object.fromEntries(
+  ['love', 'initiative', 'care', 'future', 'explicit', 'ambiguity'].map((key) => [key, { type: 'noul', noul: key === 'ambiguity' ? 0.2 : value }]),
+) });
 
-describe('JEV request', () => {
-  it('samples across a long conversation in original order', () => {
-    const sample = selectMessages(messages);
-    expect(sample).toHaveLength(180);
-    expect(sample[0].text).toBe('消息 0');
-    expect(sample.at(-1).text).toBe('消息 249');
-    expect(sample.find((m) => m.text === '消息 125')).toBeTruthy();
+describe('complete Jev analysis', () => {
+  it('covers every message in original order across chunks', () => {
+    const prepared = prepareConversation([...messages, { sender: '第三人', text: '不应发送' }], '我', '对方');
+    const sent = prepared.chunks.flat().map((m) => m.text);
+    expect(prepared.chunks.length).toBeGreaterThan(1);
+    expect(sent).toEqual(messages.map((m) => m.text));
+    expect(sent.join('')).not.toContain('不应发送');
+    expect(buildChunkRequest(prepared.chunks[0], 0, prepared.chunks.length, '我', '对方').questions.love.type).toBe('noul');
   });
 
-  it('accepts only two selected people and asks typed Jev questions', () => {
-    const request = buildRequest([...messages, { sender: '第三人', text: '私密内容' }], '我', '对方');
-    expect(request.model).toBe('jev-latest');
-    expect(request.state.messages).toHaveLength(180);
-    expect(JSON.stringify(request.state)).not.toContain('私密内容');
-    expect(request.questions.romantic_signal.type).toBe('noul');
+  it('splits exceptionally long text without dropping any character', () => {
+    const long = '你好🙂'.repeat(5000);
+    const prepared = prepareConversation([{ sender: '我', text: long }, ...messages.slice(0, 6)], '我', '对方');
+    expect(prepared.chunks.flat().filter((m) => m.messageIndex === 0).map((m) => m.text).join('')).toBe(long);
   });
 
-  it('does not promote uncertain signals to a positive verdict', () => {
-    const request = buildRequest(messages, '我', '对方');
-    const response = { model: 'jev-1.13.0', answers: {
-      romantic_signal: { type: 'noul', noul: 0.82 }, initiative: { type: 'noul', noul: 0.8 },
-      care: { type: 'noul', noul: 0.7 }, future: { type: 'noul', noul: 0.6 }, explicit: { type: 'noul', noul: 0.3 },
-      ambiguity: { type: 'noul', noul: 0.8 }, relationship: { type: 'choice', choice: 'romantic', probabilities: { romantic: 0.7 }, confidence: 0.5 },
-    } };
-    expect(formatResult(response, request).verdict).toBe('目前还不明确');
+  it('makes a Jev call for every chunk and returns complementary percentages', async () => {
+    const prepared = prepareConversation(messages, '我', '对方');
+    const calls = [];
+    const progress = [];
+    const fakeFetch = async (_url, options) => {
+      calls.push(JSON.parse(options.body));
+      return { ok: true, status: 200, json: async () => answer(0.72) };
+    };
+    const result = await analyzeAll(prepared, '我', '对方', 'test-key', (done, total) => progress.push([done, total]), new AbortController().signal, fakeFetch);
+    expect(calls).toHaveLength(prepared.chunks.length);
+    expect(calls.flatMap((call) => call.state.messages.map((m) => m.text))).toEqual(messages.map((m) => m.text));
+    expect(result.love).toBeCloseTo(0.72);
+    expect(result.love + result.notLove).toBeCloseTo(1);
+    expect(result.lovePercent + result.notLovePercent).toBe(100);
+    expect(result.coverage.analyzedMessages).toBe(400);
+    expect(progress.at(-1)).toEqual([prepared.chunks.length, prepared.chunks.length]);
+  });
+
+  it('keeps an uncertain verdict when there is contrary evidence', () => {
+    const prepared = prepareConversation(messages.slice(0, 10), '我', '对方');
+    const result = combineResults([{ values: { love: 0.82, ambiguity: 0.8, initiative: 0.5, care: 0.5, future: 0.5, explicit: 0.5 }, weight: 5, model: 'jev-test' }], prepared);
+    expect(result.verdict).toBe('聊天信号尚不明确');
   });
 });

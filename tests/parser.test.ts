@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { parseJson, parsePasted, parsePlain, parseRows } from '../src/parser';
+import JSZip from 'jszip';
+import { importFiles, parseJson, parsePasted, parsePlain, parseRows } from '../src/parser';
 
 describe('chat import', () => {
   it('reads WhatsApp exports and multiline messages', () => {
@@ -17,5 +18,22 @@ describe('chat import', () => {
   it('reads Chinese CSV columns and pasted lines', () => {
     expect(parseRows([{ 发送人: '我', 内容: '你好', 时间: '10:30' }], 'x.csv')[0].text).toBe('你好');
     expect(parsePasted('甲：你好\n乙：你好呀').messages).toHaveLength(2);
+  });
+
+  it('reads supported files inside a ZIP without discarding messages', async () => {
+    const zip = new JSZip();
+    zip.file('chat.txt', '我：你好\n对方：你好呀');
+    const file = new File([await zip.generateAsync({ type: 'uint8array' })], 'chat.zip');
+    const imported = await importFiles([file]);
+    expect(imported.messages.map((message) => message.text)).toEqual(['你好', '你好呀']);
+  });
+
+  it('rejects an oversized compressed export instead of returning a partial chat', async () => {
+    const zip = new JSZip();
+    zip.file('chat.txt', 'A'.repeat(20 * 1024 * 1024 + 1));
+    const file = new File([await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' })], 'large.zip');
+    const imported = await importFiles([file]);
+    expect(imported.messages).toHaveLength(0);
+    expect(imported.warnings.join(' ')).toContain('无法完整导入');
   });
 });

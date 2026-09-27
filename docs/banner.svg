@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520" role="img" aria-label="之间应用展示图，左侧聊天导入，右侧示例判断结果">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f5f7f7"/><stop offset="1" stop-color="#e5ecee"/></linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fff"/><stop offset="1" stop-color="#f5f9f9"/></linearGradient>
+    <filter id="shadow"><feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#5a7580" flood-opacity=".14"/></filter>
+  </defs>
+  <rect width="1200" height="520" fill="url(#bg)"/>
+  <circle cx="1100" cy="34" r="220" fill="none" stroke="#d2dfe2"/>
+  <circle cx="1100" cy="34" r="175" fill="none" stroke="#d9e5e7"/>
+  <text x="70" y="92" fill="#2d3c43" font-family="Songti SC,STSong,serif" font-size="54" font-weight="600" letter-spacing="7">之间<tspan fill="#829da5">.</tspan></text>
+  <text x="73" y="124" fill="#78909a" font-family="Songti SC,STSong,serif" font-size="16" letter-spacing="4">逐句观察 · 保留分寸</text>
+  <rect x="70" y="165" width="1060" height="295" rx="18" fill="url(#panel)" stroke="#d6e1e3" filter="url(#shadow)"/>
+  <path d="M70 213H1130" stroke="#e1e9ea"/>
+  <circle cx="94" cy="189" r="5" fill="#e0a8a0"/><circle cx="111" cy="189" r="5" fill="#e5c58e"/><circle cx="128" cy="189" r="5" fill="#a6c5ad"/>
+  <text x="482" y="193" fill="#9aaaaf" font-family="Songti SC,STSong,serif" font-size="12" letter-spacing="2">聊天关系观察室</text>
+  <text x="1030" y="193" fill="#9aaaaf" font-family="Songti SC,STSong,serif" font-size="10">DEMO</text>
+  <path d="M649 213V460" stroke="#e1e9ea"/>
+  <text x="112" y="257" fill="#607f89" font-family="Songti SC,STSong,serif" font-size="13">01  导入你们的对话</text>
+  <rect x="110" y="283" width="492" height="137" rx="12" fill="#f6f9f9" stroke="#d4e1e3" stroke-dasharray="4 5"/>
+  <text x="137" y="319" fill="#6d8790" font-family="Songti SC,STSong,serif" font-size="15">林予  ·  你昨天说头疼，今天好些了吗？</text>
+  <text x="137" y="354" fill="#718890" font-family="Songti SC,STSong,serif" font-size="15">我      ·  好多啦，谢谢你记得。</text>
+  <text x="137" y="389" fill="#6d8790" font-family="Songti SC,STSong,serif" font-size="15">林予  ·  周末一起去看那个展吗？</text>
+  <text x="694" y="257" fill="#607f89" font-family="Songti SC,STSong,serif" font-size="13">02  观察结果</text>
+  <text x="694" y="310" fill="#334a54" font-family="Songti SC,STSong,serif" font-size="24">聊天中有亲密迹象</text>
+  <rect x="694" y="337" width="180" height="79" rx="10" fill="#e6eff0"/>
+  <rect x="888" y="337" width="180" height="79" rx="10" fill="#f0f4f4"/>
+  <text x="713" y="362" fill="#617d86" font-family="Songti SC,STSong,serif" font-size="12">爱 · 迹象</text>
+  <text x="713" y="400" fill="#537a85" font-family="Georgia,serif" font-size="32">68%</text>
+  <text x="907" y="362" fill="#87999e" font-family="Songti SC,STSong,serif" font-size="12">不爱 · 迹象</text>
+  <text x="907" y="400" fill="#84979c" font-family="Georgia,serif" font-size="32">32%</text>
+  <text x="706" y="445" fill="#9aabb0" font-family="Songti SC,STSong,serif" font-size="10">虚构演示数据 · 仅供娱乐 · 不代表真实感情概率</text>
+</svg>

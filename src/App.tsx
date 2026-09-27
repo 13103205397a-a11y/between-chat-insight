@@ -3,8 +3,8 @@ import { ArrowRight, Check, ChevronDown, Eye, EyeOff, FileArchive, FileText, Hea
 import { ChatMessage, importFiles, parsePasted } from './parser';
 
 type Result = {
-  verdict: string; signal: number; category: string; categoryProbabilities: Record<string, number>;
-  confidence: number; factors: Record<string, number>; sample: { total_messages: number; sampled_messages: number; method: string };
+  verdict: string; love: number; notLove: number; lovePercent: number; notLovePercent: number; factors: Record<string, number>;
+  coverage: { totalMessages: number; analyzedMessages: number; chunks: number };
   model: string; note: string;
 };
 
@@ -35,15 +35,18 @@ export default function App() {
   const [keyError, setKeyError] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState<{ completed: number; total: number } | null>(null);
   const [error, setError] = useState('');
   const [result, setResult] = useState<Result | null>(null);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
+  const analysisController = useRef<AbortController | null>(null);
 
   useEffect(() => { fetch('/api/health').then((r) => r.json()).then((data) => setServerReady(Boolean(data.ready))).catch(() => setServerReady(false)); }, []);
   const participants = useMemo(() => [...new Set(messages.map((m) => m.sender))].sort((a, b) => messages.filter((m) => m.sender === b).length - messages.filter((m) => m.sender === a).length), [messages]);
   const pairMessages = useMemo(() => messages.filter((m) => m.sender === self || m.sender === other), [messages, self, other]);
+  const estimatedCalls = useMemo(() => Math.max(1, Math.ceil(pairMessages.reduce((sum, m) => sum + m.text.length + m.sender.length + 85, 0) / 10000)), [pairMessages]);
   const canAnalyze = self && other && self !== other && pairMessages.filter((m) => m.sender === self).length >= 3 && pairMessages.filter((m) => m.sender === other).length >= 3;
 
   function adopt(next: ChatMessage[], files: string[], notices: string[]) {
@@ -80,15 +83,39 @@ export default function App() {
 
   async function analyze() {
     if (!canAnalyze) return;
-    setLoading(true); setError(''); setResult(null);
+    setLoading(true); setProgress(null); setError(''); setResult(null);
+    const controller = new AbortController();
+    analysisController.current = controller;
     try {
-      const response = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(keyVerified ? { 'X-TypeSafe-Api-Key': apiKey.trim() } : {}) }, body: JSON.stringify({ messages: pairMessages, self, other }) });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || '分析失败，请重试');
-      setResult(data);
+      const response = await fetch('/api/analyze', { method: 'POST', signal: controller.signal, headers: { 'Content-Type': 'application/json', ...(keyVerified ? { 'X-TypeSafe-Api-Key': apiKey.trim() } : {}) }, body: JSON.stringify({ messages: pairMessages, self, other }) });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || '分析失败，请重试');
+      }
+      if (!response.body) throw new Error('浏览器不支持流式分析');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let pending = '';
+      let finalResult: Result | null = null;
+      while (true) {
+        const { value, done } = await reader.read();
+        pending += decoder.decode(value, { stream: !done });
+        const lines = pending.split('\n');
+        pending = lines.pop() || '';
+        for (const line of lines) {
+          if (!line) continue;
+          const event = JSON.parse(line);
+          if (event.type === 'progress') setProgress({ completed: event.completed, total: event.total });
+          if (event.type === 'error') throw new Error(event.error);
+          if (event.type === 'result') finalResult = event.result;
+        }
+        if (done) break;
+      }
+      if (!finalResult) throw new Error('分析未完成，请重试');
+      setResult(finalResult);
       requestAnimationFrame(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '分析失败，请重试'); }
-    finally { setLoading(false); }
+    } catch (cause) { setError(controller.signal.aborted ? '已停止分析' : cause instanceof Error ? cause.message : '分析失败，请重试'); }
+    finally { setLoading(false); analysisController.current = null; }
   }
 
   function reset() { adopt([], [], []); setPaste(''); if (inputRef.current) inputRef.current.value = ''; }
@@ -96,12 +123,12 @@ export default function App() {
   return <div className="app-shell">
     <header className="site-header">
       <a className="brand" href="#top" aria-label="之间，返回顶部"><span className="brand-mark"><span /></span><span>之间<span className="brand-period">.</span></span></a>
-      <div className="header-right"><span className="privacy-pill"><LockKeyhole size={13} strokeWidth={1.8} /> 私密解析</span><span className="header-caption">聊天关系观察室</span></div>
+      <div className="header-right"><span className="privacy-pill"><LockKeyhole size={13} strokeWidth={1.8} /> 私密解析</span><span className="entertainment-pill">仅供娱乐</span><span className="header-caption">聊天关系观察室</span></div>
     </header>
 
     <main id="top">
       <section className="intro">
-        <div className="intro-copy"><div className="eyebrow"><span className="eyebrow-line" /> 读懂对话之间</div><h1>字里行间，<br /><em>有迹可循。</em></h1><p>导入你们的聊天记录，看看对方的主动、关心与靠近。让每一个判断，都有它的分寸。</p></div>
+        <div className="intro-copy"><div className="eyebrow"><span className="eyebrow-line" /> 读懂对话之间</div><h1>字里行间，<br /><em>有迹可循。</em></h1><p>逐条读取你们的文字聊天，观察对方的主动、关心与靠近。让每一个判断，都有它的分寸。</p></div>
         <div className="intro-art" aria-hidden="true"><div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className="art-bubble art-bubble-one">今天过得怎么样？</div><div className="art-bubble art-bubble-two">刚好想起你。</div><div className="art-point point-one" /><div className="art-point point-two" /></div>
       </section>
 
@@ -116,6 +143,7 @@ export default function App() {
               <div className="upload-icon"><UploadCloud size={27} strokeWidth={1.45} /></div><strong>把聊天文件拖到这里</strong><span>或点击下方按钮，从电脑选择</span><button className="outline-button" onClick={() => inputRef.current?.click()}><Plus size={15} /> 选择文件</button>
             </div> : <div className="paste-box"><textarea value={paste} onChange={(e) => setPaste(e.target.value)} placeholder={'例如：\n2026-08-12 09:15 小林：今天怎么样？\n2026-08-12 09:20 我：还不错，你呢？'} /><button className="outline-button" onClick={handlePaste}>读取粘贴内容 <ArrowRight size={15} /></button></div>}
             <div className="format-line"><FileArchive size={14} /><span>支持 TXT、CSV、JSON、HTML、XML、ZIP 等常见导出文件</span></div>
+            <p className="entertainment-note">仅供娱乐。聊天记录无法证明一个人的真实感情；分析时文字会发送给 TypeSafe。</p>
             <button className="sample-link" onClick={() => { setPaste(demo); setMode('paste'); const imported = parsePasted(demo); adopt(imported.messages, ['示例对话'], []); }}>先用示例对话试试 <ArrowRight size={14} /></button>
 
             {messages.length > 0 && <div className="imported-panel"><div className="imported-top"><div className="imported-icon"><FileText size={18} /></div><div><strong>已读入 {messages.length.toLocaleString()} 条消息</strong><span>{fileNames.slice(0, 3).join('、')}{fileNames.length > 3 ? ` 等 ${fileNames.length} 个文件` : ''}</span></div><button className="icon-button" aria-label="清除聊天内容" title="清除聊天内容" onClick={reset}><X size={17} /></button></div><div className="preview-title">消息预览 <span>最近 3 条</span></div><div className="preview-list">{messages.slice(-3).map((m) => <div key={m.id} className="preview-message"><span>{m.sender}</span><p>{m.text}</p></div>)}</div></div>}
@@ -131,7 +159,9 @@ export default function App() {
               {serverReady ? <p className="key-help">服务端已配置 API Key，可以直接开始观察。</p> : <><label className="key-label" htmlFor="api-key">TypeSafe API Key</label><div className="key-input-wrap"><input id="api-key" type={showKey ? 'text' : 'password'} value={apiKey} disabled={keyChecking} onChange={(e) => { setApiKey(e.target.value); setKeyVerified(false); setKeyError(''); }} onKeyDown={(e) => { if (e.key === 'Enter') void verifyKey(); }} placeholder="粘贴你的 API Key" autoComplete="off" autoCapitalize="off" spellCheck={false} /><button type="button" className="key-visibility" onClick={() => setShowKey(!showKey)} aria-label={showKey ? '隐藏 API Key' : '显示 API Key'}>{showKey ? <EyeOff size={15} /> : <Eye size={15} />}</button></div><button type="button" className="verify-button" onClick={() => void verifyKey()} disabled={!apiKey.trim() || keyChecking || keyVerified}>{keyChecking ? '正在验证…' : keyVerified ? '已验证' : '验证并连接'}</button><p className="key-help">仅在当前页面内存中使用；刷新后需要重新填写，不会保存到仓库。</p>{keyError && <p className="error-note" role="alert">{keyError}</p>}</>}
             </div>
             <div className="side-divider" /><div className="check-row"><span><Check size={14} /></span><p>原文件在浏览器中解析</p></div><div className="check-row"><span><Check size={14} /></span><p>仅分析选中的双人文字消息</p></div><div className="check-row"><span><Check size={14} /></span><p>结果不会保存在本站</p></div>
-            <button className="analyze-button" onClick={() => void analyze()} disabled={!canAnalyze || !(serverReady || keyVerified) || loading}>{loading ? '正在阅读对话…' : '开始观察'}{loading ? <span className="button-spinner" /> : <ArrowRight size={18} />}</button>
+            <button className="analyze-button" onClick={() => void analyze()} disabled={!canAnalyze || !(serverReady || keyVerified) || loading}>{loading ? `正在阅读对话${progress ? ` ${progress.completed}/${progress.total}` : '…'}` : '开始观察'}{loading ? <span className="button-spinner" /> : <ArrowRight size={18} />}</button>
+            {loading && <button className="cancel-button" onClick={() => analysisController.current?.abort()}>停止分析</button>}
+            {canAnalyze && <p className="small-help">将完整读取 {pairMessages.length.toLocaleString()} 条双人文字消息，预计约 {estimatedCalls} 段 JEV 调用。实际段数以开始后的进度为准；可能产生费用。</p>}
             {!canAnalyze && messages.length > 0 && <p className="small-help">请确认两个人各有至少 3 条文字消息。</p>}
             {serverReady === false && !keyVerified && <p className="connection-note">先填写并验证 API Key，再开始真实分析。</p>}
             {error && <p className="error-note" role="alert">{error}</p>}
@@ -139,7 +169,7 @@ export default function App() {
         </div>
       </section>
 
-      {result && <section className="result" ref={resultRef} aria-live="polite"><div className="result-header"><div className="eyebrow"><span className="eyebrow-line" /> 观察结果</div><button className="text-button" onClick={() => setResult(null)}><RotateCcw size={14} /> 重新观察</button></div><div className="result-grid"><div className="result-lead"><div className="result-kicker"><Heart size={15} /> 关于 {other} 的聊天迹象</div><h2>{result.verdict}<span>。</span></h2><p>JEV 对“持续浪漫或亲密投入迹象”的判断值为 <strong>{percent(result.signal)}</strong>。它描述的是聊天内容里的信号，不等于“爱你的概率”。</p><div className="signal-track"><span style={{ width: percent(result.signal) }} /></div><div className="signal-ends"><span>迹象较弱</span><span>迹象较明显</span></div></div><div className="factors"><div className="factors-head"><Sparkles size={17} /><span>从哪些角度阅读</span></div>{Object.entries(factorLabels).map(([key, item]) => <div className="factor-row" key={key}><div><strong>{item.label}</strong><small>{item.caption}</small></div><span className={key === 'ambiguity' ? 'muted-value' : ''}>{percent(result.factors[key])}</span></div>)}</div></div><div className="result-footer"><p><strong>阅读边界</strong>　{result.note}</p><p>本次从 {result.sample.total_messages} 条双人消息中读取 {result.sample.sampled_messages} 条（{result.sample.method}）。模型：{result.model}。</p></div></section>}
+      {result && <section className="result" ref={resultRef} aria-live="polite"><div className="result-header"><div className="eyebrow"><span className="eyebrow-line" /> 观察结果 · 仅供娱乐</div><button className="text-button" onClick={() => setResult(null)}><RotateCcw size={14} /> 重新观察</button></div><div className="result-grid"><div className="result-lead"><div className="result-kicker"><Heart size={15} /> 关于 {other} 的聊天迹象</div><h2>{result.verdict}<span>。</span></h2><div className="love-numbers"><div><small>爱</small><strong>{result.lovePercent}%</strong></div><div><small>不爱</small><strong>{result.notLovePercent}%</strong></div></div><p>这是 JEV 对聊天里爱意迹象的判断倾向。两个数字互补呈现，不代表 {other} 内心感情的真实概率。</p><div className="signal-track"><span style={{ width: percent(result.love) }} /></div><div className="signal-ends"><span>爱意迹象较弱</span><span>爱意迹象较明显</span></div></div><div className="factors"><div className="factors-head"><Sparkles size={17} /><span>从哪些角度阅读</span></div>{Object.entries(factorLabels).map(([key, item]) => <div className="factor-row" key={key}><div><strong>{item.label}</strong><small>{item.caption}</small></div><span className={key === 'ambiguity' ? 'muted-value' : ''}>{percent(result.factors[key])}</span></div>)}</div></div><div className="result-footer"><p><strong>阅读边界</strong>　{result.note}</p><p>本次完整读取 {result.coverage.analyzedMessages} / {result.coverage.totalMessages} 条双人文字消息，分为 {result.coverage.chunks} 段。模型：{result.model}。</p></div></section>}
 
       <section className="bottom-note"><div className="bottom-icon"><Heart size={19} strokeWidth={1.5} /></div><h2>真正的答案，也许在对话之外。</h2><p>这是一份聊天观察，不是关系诊断。重要的感受，值得当面确认。</p></section>
     </main>

@@ -5,7 +5,8 @@ export type ChatMessage = { id: string; sender: string; text: string; time?: str
 export type ImportResult = { messages: ChatMessage[]; files: string[]; warnings: string[] };
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
-const MAX_MESSAGES = 30000;
+const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
+const MAX_MESSAGES = 100000;
 const supported = /\.(txt|md|csv|tsv|json|html?|xml)$/i;
 const senderKeys = ['sender', 'from', 'author', 'user', 'name', 'contact', '发信人', '发送人', '发送者', '昵称', '用户', '联系人', '说话人'];
 const textKeys = ['text', 'message', 'content', 'body', 'msg', '消息', '内容', '文本', '消息内容'];
@@ -130,24 +131,62 @@ function parseContent(content: string, name: string): ChatMessage[] {
   return parsePlain(content, name);
 }
 
+async function readZipText(entry: JSZip.JSZipObject, maxBytes: number): Promise<string> {
+  type ZipStream = {
+    on(event: 'data', callback: (chunk: string) => void): ZipStream;
+    on(event: 'end', callback: () => void): ZipStream;
+    on(event: 'error', callback: (error: Error) => void): ZipStream;
+    pause(): void;
+    resume(): void;
+  };
+  const stream = (entry as unknown as { internalStream(type: 'string'): ZipStream }).internalStream('string');
+  return new Promise((resolve, reject) => {
+    let content = '';
+    let bytes = 0;
+    let settled = false;
+    stream.on('data', (chunk) => {
+      if (settled) return;
+      bytes += new TextEncoder().encode(chunk).length;
+      if (bytes > maxBytes) {
+        settled = true;
+        stream.pause();
+        reject(new Error('ZIP 解压后的内容超过大小上限'));
+      } else content += chunk;
+    });
+    stream.on('end', () => { if (!settled) resolve(content); });
+    stream.on('error', (error) => { if (!settled) reject(error); });
+    stream.resume();
+  });
+}
+
 export async function importFiles(files: File[]): Promise<ImportResult> {
   const messages: ChatMessage[] = [];
   const names: string[] = [];
   const warnings: string[] = [];
+  let totalBytes = 0;
+  let incomplete = false;
   for (const file of files) {
-    if (file.size > MAX_FILE_BYTES) { warnings.push(`${file.name} 超过 20 MB，已跳过`); continue; }
+    if (file.size > MAX_FILE_BYTES) { warnings.push(`${file.name} 超过单文件 20 MB 上限`); incomplete = true; break; }
     try {
       if (/\.zip$/i.test(file.name)) {
         const zip = await JSZip.loadAsync(await file.arrayBuffer());
-        const entries = Object.values(zip.files).filter((entry) => !entry.dir && supported.test(entry.name) && !entry.name.startsWith('__MACOSX/')).slice(0, 30);
+        const entries = Object.values(zip.files).filter((entry) => !entry.dir && supported.test(entry.name) && !entry.name.startsWith('__MACOSX/'));
+        if (entries.length > 30) { warnings.push(`${file.name} 含有超过 30 个聊天文件`); incomplete = true; break; }
         if (!entries.length) warnings.push(`${file.name} 中没有可识别的聊天文件`);
         for (const entry of entries) {
-          if ((entry as any)._data?.uncompressedSize > MAX_FILE_BYTES) { warnings.push(`${entry.name} 过大，已跳过`); continue; }
-          const parsed = parseContent(await entry.async('string'), entry.name);
+          const size = (entry as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize;
+          if (!Number.isSafeInteger(size) || size! > MAX_FILE_BYTES || totalBytes + size! > MAX_TOTAL_BYTES) {
+            warnings.push(`${entry.name} 解压后过大，无法完整导入`); incomplete = true; break;
+          }
+          const content = await readZipText(entry, Math.min(MAX_FILE_BYTES, MAX_TOTAL_BYTES - totalBytes));
+          totalBytes += new TextEncoder().encode(content).length;
+          const parsed = parseContent(content, entry.name);
           messages.push(...parsed); names.push(entry.name);
           if (!parsed.length) warnings.push(`${entry.name} 没有识别出带发送者的文字消息`);
         }
       } else if (supported.test(file.name)) {
+        if (totalBytes + file.size > MAX_TOTAL_BYTES) { warnings.push('文件总大小超过 25 MB，无法完整导入'); incomplete = true; break; }
+        totalBytes += file.size;
         const parsed = parseContent(await file.text(), file.name);
         messages.push(...parsed); names.push(file.name);
         if (!parsed.length) warnings.push(`${file.name} 没有识别出带发送者的文字消息`);
@@ -155,12 +194,16 @@ export async function importFiles(files: File[]): Promise<ImportResult> {
     } catch (error) {
       warnings.push(`${file.name} 解析失败：${error instanceof Error ? error.message : '文件损坏'}`);
     }
-    if (messages.length > MAX_MESSAGES) { warnings.push('最多保留前 30,000 条消息'); break; }
+    if (incomplete) break;
+    if (messages.length > MAX_MESSAGES) { warnings.push('超过 100,000 条消息上限，无法完整导入'); incomplete = true; break; }
   }
-  return { messages: messages.slice(0, MAX_MESSAGES).map((m, i) => ({ ...m, id: `${i}:${m.id}` })), files: names, warnings };
+  if (incomplete) return { messages: [], files: [], warnings: [...warnings, '为避免遗漏消息，本次没有导入；请选取更小的完整导出文件。'] };
+  return { messages: messages.map((m, i) => ({ ...m, id: `${i}:${m.id}` })), files: names, warnings };
 }
 
 export function parsePasted(text: string): ImportResult {
+  if (new Blob([text]).size > MAX_TOTAL_BYTES) return { messages: [], files: [], warnings: ['粘贴内容超过 25 MB，无法完整导入'] };
   const messages = parsePlain(text);
+  if (messages.length > MAX_MESSAGES) return { messages: [], files: [], warnings: ['超过 100,000 条消息上限，无法完整导入'] };
   return { messages, files: ['粘贴内容'], warnings: messages.length ? [] : ['请按“张三：内容”或带时间的聊天格式粘贴'] };
 }
